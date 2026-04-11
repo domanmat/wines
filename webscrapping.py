@@ -1,9 +1,10 @@
-import requests
+import requests # type: ignore
 import csv
 import time
 import random
 import json
 from urllib.parse import urlencode
+from datetime import datetime
 
 '''
 The entire database from https://www.wineenthusiast.com/wine-ratings/ is accessible directly via the Algolia API — no browser, no Playwright needed at all. 
@@ -44,7 +45,7 @@ HITS_PER_PAGE = 100
 DELAY_MIN = 1.5
 DELAY_MAX = 3.5
 YEARS = range(2020, 2027)
-OUTPUT_FILE = "wine_reviews.csv"
+OUTPUT_FILE = f"wine_reviews-{datetime.now().strftime('%Y-%m-%d-%H-%M')}.csv"
 
 '''
 Grouped into logical sections:
@@ -77,10 +78,14 @@ Three changes made:
   - flush=True added to the rolling print — this was likely why the output wasn't showing in real time (Python buffers stdout by default)
   - Red warning (\033[91m) printed whenever the 1000-result cap is actually hit, so you can't miss it       
   '''
+
+'''
+The fix is to batch small varietals together into a single request using OR filters, instead of one API call per varietal. Large varietals (>threshold) still get their own calls and recurse as before.  
+'''
 counter = [0]
 
 
-def fetch_page(page: int, filters: str, facets: list = None) -> dict:
+def fetch_page(page: int, filters: str, facets: list = None) -> dict: # type: ignore
     params = {
         "hitsPerPage": HITS_PER_PAGE,
         "page": page,
@@ -112,7 +117,7 @@ RED = "\033[91m"
 RESET = "\033[0m"
 
 
-def fetch_all_pages(filters: str, writer, remaining_splits: list = None) -> int:
+def fetch_all_pages(filters: str, writer, remaining_splits: list = None) -> int: # type: ignore
     """Paginate through all results for a filter combo (Algolia cap: 1000).
     Returns the total hit count reported by Algolia."""
     first = fetch_page(0, filters)
@@ -140,10 +145,26 @@ def fetch_all_pages(filters: str, writer, remaining_splits: list = None) -> int:
     return total_hits
 
 
+BATCH_THRESHOLD = 200  # facet values with fewer wines are batched together
+
+
+def _safe(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _fetch_segment(filters: str, writer, split_by: list):
+    """Fetch a resolved segment (total <= 1000), warn if cap is hit."""
+    actual = fetch_all_pages(filters, writer, remaining_splits=split_by)
+    if actual > 1000:
+        print(f"\n{RED}  WARNING: {actual:,} hits but only 1000 fetched for filter: {filters}{RESET}")
+
+
 def scrape_segment(filters: str, writer, split_by: list):
     """
     Fetch all results for a filter. If results > 1000, split by the
     first facet in split_by, then recurse with the remaining facets.
+    Small facet values (< BATCH_THRESHOLD) are grouped into batched OR requests
+    to avoid hundreds of tiny single-wine API calls.
     """
     probe = fetch_page(0, filters, facets=split_by[:1] if split_by else None)
     total = probe["nbHits"]
@@ -152,27 +173,47 @@ def scrape_segment(filters: str, writer, split_by: list):
         return
 
     if total <= 1000 or not split_by:
-        actual = fetch_all_pages(filters, writer, remaining_splits=split_by)
-        if actual > 1000:
-            print(f"\n{RED}  WARNING: {actual:,} hits but only 1000 fetched for filter: {filters}{RESET}")
+        _fetch_segment(filters, writer, split_by)
         return
 
-    # Split by first available facet
     facet_field = split_by[0]
     facet_values = probe.get("facets", {}).get(facet_field, {})
 
     if not facet_values:
-        # Facet returned nothing — just take what we can
-        actual = fetch_all_pages(filters, writer, remaining_splits=split_by)
-        if actual > 1000:
-            print(f"\n{RED}  WARNING: {actual:,} hits but only 1000 fetched for filter: {filters}{RESET}")
+        _fetch_segment(filters, writer, split_by)
         return
 
-    for value in facet_values:
-        safe_value = value.replace("\\", "\\\\").replace('"', '\\"')
-        sub_filter = f'{filters} AND {facet_field}:"{safe_value}"'
+    # Separate large values (recurse individually) from small ones (batch with OR)
+    large = {v: c for v, c in facet_values.items() if c >= BATCH_THRESHOLD}
+    small = {v: c for v, c in facet_values.items() if c < BATCH_THRESHOLD}
+
+    for value in large:
+        sub_filter = f'{filters} AND {facet_field}:"{_safe(value)}"'
         time.sleep(random.uniform(DELAY_MIN, DELAY_MAX))
         scrape_segment(sub_filter, writer, split_by[1:])
+
+    # Batch small values so their combined count stays under 1000
+    if small:
+        batch, batch_count = [], 0
+        for value, count in small.items():
+            if batch_count + count > 1000 and batch:
+                _flush_batch(filters, facet_field, batch, writer, split_by)
+                batch, batch_count = [], 0
+            batch.append(value)
+            batch_count += count
+        if batch:
+            _flush_batch(filters, facet_field, batch, writer, split_by)
+
+
+def _flush_batch(filters: str, facet_field: str, values: list, writer, split_by: list):
+    """Fetch a batch of small facet values in a single OR request."""
+    time.sleep(random.uniform(DELAY_MIN, DELAY_MAX))
+    if len(values) == 1:
+        sub_filter = f'{filters} AND {facet_field}:"{_safe(values[0])}"'
+    else:
+        or_parts = " OR ".join(f'{facet_field}:"{_safe(v)}"' for v in values)
+        sub_filter = f'{filters} AND ({or_parts})'
+    _fetch_segment(sub_filter, writer, split_by[1:])
 
 
 def scrape():
