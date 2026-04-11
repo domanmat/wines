@@ -112,16 +112,22 @@ RED = "\033[91m"
 RESET = "\033[0m"
 
 
-def fetch_all_pages(filters: str, writer) -> int:
+def fetch_all_pages(filters: str, writer, remaining_splits: list = None) -> int:
     """Paginate through all results for a filter combo (Algolia cap: 1000).
     Returns the total hit count reported by Algolia."""
     first = fetch_page(0, filters)
     total_hits = first["nbHits"]
     accessible_pages = min(first["nbPages"], 1000 // HITS_PER_PAGE)
 
+    print(f"\n  Filters  : {filters}")
+    if remaining_splits:
+        print(f"  Unused splits (not needed): {', '.join(remaining_splits)}")
+    print(f"  Segment  : {total_hits:,} wines — {accessible_pages} page(s) to fetch", flush=True)
+
     rows = [extract(hit) for hit in first["hits"]]
     writer.writerows(rows)
     counter[0] += len(rows)
+    print(f"  Page 1/{accessible_pages} — {len(rows):,} in segment — {counter[0]:,} reviews collected so far", flush=True)
 
     for page in range(1, accessible_pages):
         time.sleep(random.uniform(DELAY_MIN, DELAY_MAX))
@@ -129,7 +135,7 @@ def fetch_all_pages(filters: str, writer) -> int:
         rows = [extract(hit) for hit in result["hits"]]
         writer.writerows(rows)
         counter[0] += len(rows)
-        print(f"  {counter[0]:,} reviews collected so far...", end="\r", flush=True)
+        print(f"  Page {page + 1}/{accessible_pages} — {len(rows):,} in segment — {counter[0]:,} reviews collected so far", flush=True)
 
     return total_hits
 
@@ -146,7 +152,7 @@ def scrape_segment(filters: str, writer, split_by: list):
         return
 
     if total <= 1000 or not split_by:
-        actual = fetch_all_pages(filters, writer)
+        actual = fetch_all_pages(filters, writer, remaining_splits=split_by)
         if actual > 1000:
             print(f"\n{RED}  WARNING: {actual:,} hits but only 1000 fetched for filter: {filters}{RESET}")
         return
@@ -157,7 +163,7 @@ def scrape_segment(filters: str, writer, split_by: list):
 
     if not facet_values:
         # Facet returned nothing — just take what we can
-        actual = fetch_all_pages(filters, writer)
+        actual = fetch_all_pages(filters, writer, remaining_splits=split_by)
         if actual > 1000:
             print(f"\n{RED}  WARNING: {actual:,} hits but only 1000 fetched for filter: {filters}{RESET}")
         return
