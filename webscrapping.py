@@ -166,7 +166,7 @@ def scrape_segment(filters: str, writer, split_by: list):
     Small facet values (< BATCH_THRESHOLD) are grouped into batched OR requests
     to avoid hundreds of tiny single-wine API calls.
     """
-    probe = fetch_page(0, filters, facets=split_by[:1] if split_by else None)
+    probe = fetch_page(0, filters, facets=split_by[:1] if split_by else None) # type: ignore
     total = probe["nbHits"]
 
     if total == 0:
