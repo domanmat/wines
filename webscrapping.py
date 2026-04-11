@@ -40,18 +40,43 @@ How it works:
   Expected total: ~140,000–150,000 reviews. With delays, runtime will be a few hours — perfectly polite toward the server.
   '''
 
-HITS_PER_PAGE = 50
+HITS_PER_PAGE = 100
 DELAY_MIN = 1.5
 DELAY_MAX = 3.5
 YEARS = range(2020, 2027)
 OUTPUT_FILE = "wine_reviews.csv"
 
+'''
+Grouped into logical sections:
+  - Identity — wine name, producer, vintage
+  - Characteristics — type, varietal, alcohol, bottle size, production volume                         
+  - Geography — country → state → appellation
+  - Review — rating and price together, then the review text and reviewer                           
+  - Dates — received, reviewed, published (chronological order)
+  - Misc — slug at the end
+'''
+
 FIELDS = [
-    "name", "brand", "vintage", "varietal_label", "wine_type",
-    "appellation", "designation", "rating", "review", "reviewer",
-    "retail", "state", "slug", "pub_date_web", "alcohol", "country",
+    # identity
+    "name", "brand", "company",  
+    # wine characteristics
+    "vintage", "drink_type", "wine_type", "varietal_label", "alcohol", "bottle_size", "case_production",
+    # geography
+    "country", "state", "appellation", "designation",
+    # review
+    "retail", "rating", "reviewer","review", "date_of_review", 
+    # dates
+    "date_received", "pub_date_web",
+    # misc
+    "slug",
 ]
 
+'''
+Three changes made:    
+  - brand → designation as the deepest split level — much lower cardinality, still effective
+  - flush=True added to the rolling print — this was likely why the output wasn't showing in real time (Python buffers stdout by default)
+  - Red warning (\033[91m) printed whenever the 1000-result cap is actually hit, so you can't miss it       
+  '''
 counter = [0]
 
 
@@ -64,6 +89,7 @@ def fetch_page(page: int, filters: str, facets: list = None) -> dict:
     }
     if facets:
         params["facets"] = json.dumps(facets)
+        params["maxValuesPerFacet"] = 1000
 
     body = {
         "requests": [{
@@ -82,9 +108,15 @@ def extract(hit: dict) -> dict:
     return row
 
 
-def fetch_all_pages(filters: str, writer):
-    """Paginate through all results for a filter combo (Algolia cap: 1000)."""
+RED = "\033[91m"
+RESET = "\033[0m"
+
+
+def fetch_all_pages(filters: str, writer) -> int:
+    """Paginate through all results for a filter combo (Algolia cap: 1000).
+    Returns the total hit count reported by Algolia."""
     first = fetch_page(0, filters)
+    total_hits = first["nbHits"]
     accessible_pages = min(first["nbPages"], 1000 // HITS_PER_PAGE)
 
     rows = [extract(hit) for hit in first["hits"]]
@@ -97,7 +129,9 @@ def fetch_all_pages(filters: str, writer):
         rows = [extract(hit) for hit in result["hits"]]
         writer.writerows(rows)
         counter[0] += len(rows)
-        print(f"  {counter[0]:,} reviews collected so far...", end="\r")
+        print(f"  {counter[0]:,} reviews collected so far...", end="\r", flush=True)
+
+    return total_hits
 
 
 def scrape_segment(filters: str, writer, split_by: list):
@@ -112,9 +146,9 @@ def scrape_segment(filters: str, writer, split_by: list):
         return
 
     if total <= 1000 or not split_by:
-        if total > 1000:
-            print(f"\n  Warning: {total:,} hits for [{filters}] — taking first 1000")
-        fetch_all_pages(filters, writer)
+        actual = fetch_all_pages(filters, writer)
+        if actual > 1000:
+            print(f"\n{RED}  WARNING: {actual:,} hits but only 1000 fetched for filter: {filters}{RESET}")
         return
 
     # Split by first available facet
@@ -123,7 +157,9 @@ def scrape_segment(filters: str, writer, split_by: list):
 
     if not facet_values:
         # Facet returned nothing — just take what we can
-        fetch_all_pages(filters, writer)
+        actual = fetch_all_pages(filters, writer)
+        if actual > 1000:
+            print(f"\n{RED}  WARNING: {actual:,} hits but only 1000 fetched for filter: {filters}{RESET}")
         return
 
     for value in facet_values:
@@ -144,8 +180,8 @@ def scrape():
         for year in YEARS:
             print(f"Year {year}:")
             base_filter = f"drink_type:wine AND pub_date_web_year:{year}"
-            # Split: country → wine_type → varietal to get past Algolia's 1000-result cap
-            scrape_segment(base_filter, writer, split_by=["countries_menu.lvl0", "wine_type", "varietal_label"])
+            # Split: country → wine_type → varietal → state to get past Algolia's 1000-result cap
+            scrape_segment(base_filter, writer, split_by=["countries_menu.lvl0", "wine_type", "varietal_label", "state", "vintage", "designation"])
             print(f"\n  Done — {counter[0]:,} total so far\n")
 
     print(f"Finished. {counter[0]:,} reviews saved to {OUTPUT_FILE}")
