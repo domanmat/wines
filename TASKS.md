@@ -37,6 +37,8 @@
 - [ ] Verify row count and spot-check sample rows with `display()`
 - [ ] Commit notebook to Git
 
+> **Data quality issue found (2026-04-26):** Some `review` fields contain embedded newline characters, causing the CSV parser to split one logical row into multiple physical rows — the second fragment then has columns shifted, producing garbage values in `alcohol`, `vintage`, `case_production`, `retail`, `rating`. ~4,858 rows affected. Fix: strip all newline characters from the source CSV with a regex pass before creating the Delta table.
+
 ---
 
 ## Sprint 2 — EDA (Exploratory Data Analysis)
@@ -63,6 +65,7 @@
   - standardize string fields (strip whitespace, fix casing),
   - parse and validate `vintage`, `date_of_review`, `pub_date_web` as date types,
   - handle mixed number/string values in `alcohol`, `bottle_size`,
+  - fix newline-in-review bug: strip embedded `\n`/`\r` from `review` field in source CSV before ingestion (causes ~4,858 rows to split into malformed fragments with shifted columns),
   - unify `wine_type` and `drink_type` labels,
   - flag rows with missing `retail` (target) — these cannot be used for training,
   - save as Delta table: `silver.wine_reviews`
