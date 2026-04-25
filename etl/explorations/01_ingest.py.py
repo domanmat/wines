@@ -8,12 +8,30 @@
 
 # COMMAND ----------
 
-import sys
+# DBTITLE 1,Cell 2
+from pyspark.sql import SparkSession
 
-sys.path.append("/Workspace/Users/doman.mat@gmail.com/wines/etl")
+username="doman.mat@gmail.com"
+file_name='tables/wine_reviews-2026-04-11-23-44.csv'
+
+spark = SparkSession.builder.getOrCreate()
+
+df=spark.read.csv(f'/user/{username}/wines/{file_name}', header=True, inferSchema=True)
+
+
+df.printSchema()
+display(df.limit(10))
+print(f"Row count: {df.count():,}")
+
+# Save as Delta Bronze
+df.write.format("delta").mode("overwrite").saveAsTable("bronze.wine_reviews")
 
 # COMMAND ----------
 
 # !!! Before performing any data analysis, make sure to run the pipeline to materialize the sample datasets. The tables referenced in this notebook depend on that step.
 
 display(spark.sql("SELECT * FROM workspace.default.sample_aggregation_etl"))
+
+# COMMAND ----------
+
+
