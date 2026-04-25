@@ -1,6 +1,6 @@
 # TASKS — Wine Price Prediction Project
 > Mini-sprint plan. Each sprint = one focused working session (est. 1–3h).  
-> Status legend: `[ ]` to do · `[x]` done · `[~]` in progress · `[!]` blocked
+> Status legend: `- [ ]` to do · `✓` done · `[~]` in progress · `[!]` blocked
 
 ---
 
@@ -29,15 +29,17 @@
 ## Sprint 1 — Data Ingestion (Bronze Layer)
 *Goal: raw data loaded into Delta Bronze table on Databricks.*
 
-- [ ] Upload raw scraped CSV/JSON to Databricks (DBFS or Unity Catalog Volume)
-- [ ] Write `notebooks/01_ingest.py`:
-  - read raw file with PySpark,
-  - minimal schema enforcement (column names, basic types),
-  - save as Delta table: `bronze.wine_reviews`
-- [ ] Verify row count and spot-check sample rows with `display()`
+✓ Upload raw scraped CSV to Databricks (`/Workspace/Users/.../wines/tables/`)
+✓ Write `etl/explorations/1_ingest.ipynb`:
+  - read raw file with PySpark (`multiLine=True, escape='"'`),
+  - cast `alcohol`, `vintage`, `case_production`, `retail`, `rating` to correct types,
+  - detect cast failures via `try_cast` + `_error` columns (single agg pass for performance),
+  - add `is_nv` flag (1 for non-vintage wines, 0 otherwise) — `vintage` stays null for NV,
+  - save as Delta table: `wine_reviews_bronze`
+✓ Verify row count — **135,211 rows** after multiLine fix
 - [ ] Commit notebook to Git
 
-> **Data quality issue found (2026-04-26):** Some `review` fields contain embedded newline characters, causing the CSV parser to split one logical row into multiple physical rows — the second fragment then has columns shifted, producing garbage values in `alcohol`, `vintage`, `case_production`, `retail`, `rating`. ~4,858 rows affected. Fix: strip all newline characters from the source CSV with a regex pass before creating the Delta table.
+> **Data quality issue found (2026-04-26):** Some `review` fields contain embedded newline characters, causing the CSV parser to split one logical row into multiple physical rows — the second fragment then has columns shifted, producing garbage values in `alcohol`, `vintage`, `case_production`, `retail`, `rating`. ~4,858 rows affected. **Fixed:** use `multiLine=True, escape='"'` in `spark.read.csv()` — Spark handles quoted multiline fields natively.
 
 ---
 
@@ -63,9 +65,10 @@
 - [ ] Write `notebooks/02_clean.py` + refactor logic into `src/preprocessing.py`:
   - drop exact duplicates,
   - standardize string fields (strip whitespace, fix casing),
-  - parse and validate `vintage`, `date_of_review`, `pub_date_web` as date types,
-  - handle mixed number/string values in `alcohol`, `bottle_size`,
-  - fix newline-in-review bug: strip embedded `\n`/`\r` from `review` field in source CSV before ingestion (causes ~4,858 rows to split into malformed fragments with shifted columns),
+  - parse and validate `date_of_review`, `pub_date_web` as date types,
+  - handle `vintage` nulls: NV wines already flagged via `is_nv=1` in Bronze — impute or exclude separately,
+  - handle mixed number/string values in `bottle_size`,
+  - ~~fix newline-in-review bug~~ — resolved in Bronze ingest via `multiLine=True, escape='"'` in `spark.read.csv()`,
   - unify `wine_type` and `drink_type` labels,
   - flag rows with missing `retail` (target) — these cannot be used for training,
   - save as Delta table: `silver.wine_reviews`
@@ -80,7 +83,7 @@
 - [ ] Write `notebooks/03_features.py` + refactor into `src/feature_eng.py`:
   - impute missing values: mode for categoricals, median for numerics,
   - create new features:
-    - `age_at_review` = `date_of_review` year − `vintage`,
+    - `age_at_review` = `date_of_review` year − `vintage` (only for non-NV wines),
     - `log_retail` = `log(retail)` (target variable),
   - encode categoricals:
     - One-Hot: `wine_type`, `drink_type`,
