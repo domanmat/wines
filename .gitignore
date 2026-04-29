@@ -1,12 +1,7 @@
-Notes/
-TASKS.md
-CLAUDE.md
-IDEAS.md
-.databricks/
-.venv/
-.vscode/
+_notes/
 __pycache__/
+.*/
+*.md
 *.pyc
 *.xlsx
 ~$*
-.ipynb_checkpoints/
