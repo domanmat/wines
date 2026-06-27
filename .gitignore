@@ -2,7 +2,8 @@
 .data/
 __pycache__/
 .*/
-*.md
+*DE.md
+*S.md
 *.pyc
 *.xlsx
 ~$*
