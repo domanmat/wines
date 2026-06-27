@@ -1,7 +1,10 @@
-_notes/
+.notes/
+.data/
 __pycache__/
 .*/
 *.md
 *.pyc
 *.xlsx
 ~$*
+# demo UI trained models
+ui/artifacts/

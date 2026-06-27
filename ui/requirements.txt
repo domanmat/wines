@@ -1,0 +1,2 @@
+# Demo UI deps (in addition to the project's pandas / scikit-learn / xgboost / joblib)
+streamlit>=1.36
